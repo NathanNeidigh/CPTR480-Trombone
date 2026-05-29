@@ -7,3 +7,4 @@ cmake-build-*/
 *.map
 *.dis
 compile_commands.json
+.vscode/
