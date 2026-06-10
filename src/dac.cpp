@@ -56,16 +56,38 @@ uint32_t DAC::get_next_audio_sample() {
 }
 
 void DAC::play_audio() {
+	bool stop_at_zero_crossing = false;
+
 	while (true) {
-		uint32_t new_frequency = 0;
-		if (multicore_fifo_pop_timeout_us(0, &new_frequency)) {
-			frequency_ = new_frequency;
+		uint32_t requested_frequency = 0;
+		if (multicore_fifo_pop_timeout_us(0, &requested_frequency)) {
+			if (requested_frequency == 0u && frequency_ != 0u) {
+				stop_at_zero_crossing = true;
+			} else if (requested_frequency != 0u) {
+				frequency_ = requested_frequency;
+				stop_at_zero_crossing = false;
+			}
 		}
 
-		if (frequency_ == 0u || pio_sm_get_tx_fifo_level(pio_, sm_) >= 6) {
+		if (pio_sm_get_tx_fifo_level(pio_, sm_) >= 6) {
 			continue;
 		} // Loops if the 8 sample TX FIFO can't store another stereo sample
+
+		if (frequency_ == 0u) {
+			phase_ = 0.0f;
+			//pio_sm_put(pio_, sm_, 0u); // Left-channel silence
+			//pio_sm_put(pio_, sm_, 0u); // Right-channel silence
+			continue;
+		}
+
+		const float previous_phase = phase_;
 		uint32_t mono_audio_sample = get_next_audio_sample();
+		if (stop_at_zero_crossing && phase_ < previous_phase) {
+			// The phase wrapped through 2*pi, so finish on an exact zero sample.
+			mono_audio_sample = 0u;
+			frequency_ = 0u;
+			stop_at_zero_crossing = false;
+		}
 		pio_sm_put(pio_, sm_, mono_audio_sample); // Left
 		pio_sm_put(pio_, sm_, mono_audio_sample); // Right
 	}
